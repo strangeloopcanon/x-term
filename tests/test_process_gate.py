@@ -97,6 +97,7 @@ class TestBlockXNow:
             require_tty=False,
             poll_interval_seconds=1.0,
             heartbeat_seconds=15.0,
+            invert=False,
         )
 
     def test_detects_codex_with_tty(self, config):

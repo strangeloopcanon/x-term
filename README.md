@@ -1,6 +1,8 @@
 # x-term (X gate)
 
-Blocks browsing X/Twitter (`x.com`, `twitter.com`, `t.co`) in Google Chrome while **Codex** or **Claude Code** is running in a terminal (TTY).
+Controls access to X/Twitter (`x.com`, `twitter.com`, `t.co`) in Google Chrome based on whether **Codex** or **Claude Code** is running in a terminal.
+
+**Default behavior (invert: true):** X is *allowed* while Codex/Claude is running, *blocked* when not working.
 
 ## How it works
 
@@ -41,7 +43,14 @@ python3 native-host/smoke_test.py
 
 Edit `native-host/process_gate.config.json`:
 
-- `watch_regex`: regex used to detect Codex/Claude
-- `require_tty`: only count processes with a TTY
-- `poll_interval_seconds`: polling cadence
-- `heartbeat_seconds`: status message cadence (keeps the extension worker alive)
+| Option | Default | Description |
+|--------|---------|-------------|
+| `invert` | `true` | If true: block X when Codex/Claude is NOT running (reward mode). If false: block when running (focus mode). |
+| `watch_regex` | `(?i)\b(codex\|claude...)\b` | Regex to detect Codex/Claude processes |
+| `require_tty` | `true` | Only count processes attached to a real terminal |
+| `poll_interval_seconds` | `1.0` | How often to check for processes |
+| `heartbeat_seconds` | `15.0` | Status message cadence (keeps extension alive)
+
+## Logs
+
+Logs are written to `~/Library/Logs/x-term/process_gate.log` (macOS) or `~/.cache/x-term/process_gate.log` (Linux).

@@ -45,6 +45,7 @@ class Config:
     require_tty: bool
     poll_interval_seconds: float
     heartbeat_seconds: float
+    invert: bool  # If True: block when NOT running (allow X while working)
 
 
 DEFAULT_CONFIG = Config(
@@ -52,6 +53,7 @@ DEFAULT_CONFIG = Config(
     require_tty=True,
     poll_interval_seconds=1.0,
     heartbeat_seconds=15.0,
+    invert=False,  # Default: block when running (original behavior)
 )
 
 
@@ -84,6 +86,7 @@ def _load_config() -> Config:
             _get("poll_interval_seconds", DEFAULT_CONFIG.poll_interval_seconds)
         ),
         heartbeat_seconds=float(_get("heartbeat_seconds", DEFAULT_CONFIG.heartbeat_seconds)),
+        invert=bool(_get("invert", DEFAULT_CONFIG.invert)),
     )
 
     # Validate config values
@@ -127,7 +130,7 @@ def _has_tty(tty: str) -> bool:
     return tty not in {"?", "??"} and "?" not in tty
 
 
-def _block_x_now(config: Config) -> bool:
+def _process_running(config: Config) -> bool:
     """Check if any Codex/Claude process is running (optionally with TTY)."""
     sysname = platform.system()
     watch = re.compile(config.watch_regex)
@@ -173,6 +176,18 @@ def _block_x_now(config: Config) -> bool:
         return any(watch.search(line or "") for line in out.splitlines())
 
     return False
+
+
+def _block_x_now(config: Config) -> bool:
+    """Determine if X should be blocked based on process state and invert setting.
+
+    - invert=False (default): block when Codex/Claude IS running
+    - invert=True: block when Codex/Claude is NOT running (allow X while working)
+    """
+    running = _process_running(config)
+    if config.invert:
+        return not running  # Block when NOT running
+    return running  # Block when running
 
 
 def _stdin_reader(queue: Queue[dict[str, Any] | None], stop: threading.Event) -> None:
@@ -303,7 +318,9 @@ def main(argv: list[str]) -> int:
         default=None,
         help=argparse.SUPPRESS,  # Hidden; Chrome passes chrome-extension://... here
     )
-    args = parser.parse_args(argv)
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:
+        _log("info", "ignored_unknown_args", unknown=unknown)
 
     # Override log file if specified
     if args.log_file:
@@ -333,4 +350,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

@@ -3,12 +3,26 @@
  * Shows human-readable status and controls the "Open X" button visibility.
  */
 
+function sendMessage(message) {
+  return new Promise((resolve, reject) => {
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        const err = chrome.runtime.lastError;
+        if (err) reject(new Error(err.message));
+        else resolve(response);
+      });
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
 async function getStatus() {
-  return chrome.runtime.sendMessage({ type: "get_status" });
+  return sendMessage({ type: "get_status" });
 }
 
 async function pollStatus() {
-  return chrome.runtime.sendMessage({ type: "poll_status" });
+  return sendMessage({ type: "poll_status" });
 }
 
 function formatTime(unixSeconds) {

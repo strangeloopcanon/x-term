@@ -52,12 +52,17 @@ function buildBlockRules() {
 let port = null;
 let currentBlock = true; // fail-closed until the native host tells us otherwise
 let lastStatus = null;
+let stateApplied = false;
 
 let nextPollId = 1;
 const pendingPolls = new Map(); // id -> { resolve, reject, timeout }
 
 async function setBlock(block, source = "unknown") {
-  if (currentBlock === block) return;
+  if (currentBlock === block && stateApplied) {
+    // Still ensure badge stays in sync (e.g. after reconnect).
+    updateBadge(currentBlock, Boolean(port));
+    return;
+  }
   currentBlock = block;
 
   if (block) {
@@ -70,9 +75,10 @@ async function setBlock(block, source = "unknown") {
       removeRuleIds: RULES.map((r) => r.id)
     });
   }
+  stateApplied = true;
 
   lastStatus = {
-    ...lastStatus,
+    ...(lastStatus ?? {}),
     block_x: currentBlock,
     updated_at_unix: Date.now() / 1000,
     updated_by: source
