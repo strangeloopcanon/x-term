@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Native messaging host for x-term: blocks X/Twitter while Codex/Claude runs."""
 from __future__ import annotations
 
 import argparse
@@ -16,8 +17,26 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import Any
 
-
 HOST_NAME = "com.xterm.processgate"
+LOG_FILE: Path | None = None
+
+
+def _log(level: str, message: str, **fields: Any) -> None:
+    """Write structured JSONL log entry to stderr (doesn't interfere with native messaging)."""
+    if LOG_FILE is None:
+        return
+    entry = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "level": level,
+        "logger": "process_gate",
+        "message": message,
+        **fields,
+    }
+    try:
+        with LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass  # Best-effort logging; don't crash on log failures
 
 
 @dataclass(frozen=True)
@@ -37,6 +56,7 @@ DEFAULT_CONFIG = Config(
 
 
 def _load_config() -> Config:
+    """Load configuration from JSON file or environment variable."""
     config_path = os.environ.get("XTERM_PROCESS_GATE_CONFIG")
     if config_path:
         path = Path(config_path)
@@ -45,16 +65,19 @@ def _load_config() -> Config:
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        _log("info", "config_loaded", path=str(path))
     except FileNotFoundError:
+        _log("info", "config_not_found_using_defaults", path=str(path))
         return DEFAULT_CONFIG
-    except Exception:
+    except Exception as e:
+        _log("warning", "config_parse_error_using_defaults", path=str(path), error=str(e))
         return DEFAULT_CONFIG
 
     def _get(key: str, default: Any) -> Any:
         val = data.get(key, default)
         return default if val is None else val
 
-    return Config(
+    config = Config(
         watch_regex=str(_get("watch_regex", DEFAULT_CONFIG.watch_regex)),
         require_tty=bool(_get("require_tty", DEFAULT_CONFIG.require_tty)),
         poll_interval_seconds=float(
@@ -63,18 +86,32 @@ def _load_config() -> Config:
         heartbeat_seconds=float(_get("heartbeat_seconds", DEFAULT_CONFIG.heartbeat_seconds)),
     )
 
+    # Validate config values
+    if config.poll_interval_seconds <= 0:
+        _log("warning", "invalid_poll_interval", value=config.poll_interval_seconds)
+    if config.heartbeat_seconds <= 0:
+        _log("warning", "invalid_heartbeat_seconds", value=config.heartbeat_seconds)
+
+    return config
+
 
 def _native_read_message() -> dict[str, Any] | None:
+    """Read a length-prefixed JSON message from stdin (Chrome native messaging protocol)."""
     raw_len = sys.stdin.buffer.read(4)
     if not raw_len:
+        _log("debug", "stdin_eof")
         return None
     (msg_len,) = struct.unpack("<I", raw_len)
     data = sys.stdin.buffer.read(msg_len)
     if not data:
+        _log("warning", "stdin_incomplete_message", expected_len=msg_len)
         return None
     try:
-        return json.loads(data.decode("utf-8", errors="replace"))
-    except Exception:
+        msg = json.loads(data.decode("utf-8", errors="replace"))
+        _log("debug", "message_received", msg_type=msg.get("type") if isinstance(msg, dict) else None)
+        return msg
+    except Exception as e:
+        _log("warning", "message_parse_error", error=str(e), data_len=len(data))
         return None
 
 
@@ -86,11 +123,12 @@ def _native_send_message(obj: dict[str, Any]) -> None:
 
 
 def _has_tty(tty: str) -> bool:
-    # macOS typically uses '??' and Linux uses '?' for "no tty"
+    """Check if TTY string indicates a real terminal (not '?' or '??')."""
     return tty not in {"?", "??"} and "?" not in tty
 
 
 def _block_x_now(config: Config) -> bool:
+    """Check if any Codex/Claude process is running (optionally with TTY)."""
     sysname = platform.system()
     watch = re.compile(config.watch_regex)
 
@@ -148,6 +186,9 @@ def _stdin_reader(queue: Queue[dict[str, Any] | None], stop: threading.Event) ->
 
 
 def run_watch_stdio(config: Config) -> None:
+    """Main loop: poll processes and send status updates over native messaging."""
+    _log("info", "watch_stdio_started", config=config.__dict__)
+
     stop = threading.Event()
     inbox: Queue[dict[str, Any] | None] = Queue()
 
@@ -167,6 +208,8 @@ def run_watch_stdio(config: Config) -> None:
             or (now - last_sent_at) >= config.heartbeat_seconds
         )
         if should_send:
+            if last_block is not None and block_x != last_block:
+                _log("info", "block_state_changed", block_x=block_x, previous=last_block)
             payload = {
                 "type": "status",
                 "block_x": bool(block_x),
@@ -175,6 +218,7 @@ def run_watch_stdio(config: Config) -> None:
             try:
                 _native_send_message(payload)
             except BrokenPipeError:
+                _log("info", "stdout_broken_pipe_exiting")
                 return
             last_sent_at = now
             last_block = block_x
@@ -184,18 +228,22 @@ def run_watch_stdio(config: Config) -> None:
             while True:
                 msg = inbox.get_nowait()
                 if msg is None:
+                    _log("info", "stdin_closed_exiting")
                     return
                 if isinstance(msg, dict) and msg.get("type") == "poll":
                     reply_to = msg.get("id")
+                    # Use fresh timestamp for poll replies
+                    poll_now = time.time()
                     payload = {
                         "type": "status",
                         "block_x": bool(block_x),
-                        "timestamp_unix": now,
+                        "timestamp_unix": poll_now,
                         "reply_to": reply_to,
                     }
                     try:
                         _native_send_message(payload)
                     except BrokenPipeError:
+                        _log("info", "stdout_broken_pipe_exiting")
                         return
         except Empty:
             pass
@@ -203,7 +251,30 @@ def run_watch_stdio(config: Config) -> None:
         time.sleep(max(0.05, config.poll_interval_seconds))
 
 
+def _init_logging() -> None:
+    """Initialize logging to a file in a platform-appropriate cache directory."""
+    global LOG_FILE
+    log_path = os.environ.get("XTERM_PROCESS_GATE_LOG")
+    if log_path:
+        LOG_FILE = Path(log_path)
+    else:
+        # Default: log to cache directory
+        sysname = platform.system()
+        if sysname == "Darwin":
+            cache_dir = Path.home() / "Library" / "Logs" / "x-term"
+        elif sysname == "Linux":
+            cache_dir = Path.home() / ".cache" / "x-term"
+        else:
+            cache_dir = Path.home() / ".x-term" / "logs"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        LOG_FILE = cache_dir / "process_gate.log"
+
+
 def main(argv: list[str]) -> int:
+    """Entry point for the native messaging host."""
+    _init_logging()
+    _log("info", "process_gate_started", pid=os.getpid(), argv=argv)
+
     config = _load_config()
 
     parser = argparse.ArgumentParser(
@@ -220,7 +291,18 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="Run as a Chrome native messaging host over stdin/stdout.",
     )
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Override log file path (default: ~/Library/Logs/x-term/ on macOS).",
+    )
     args = parser.parse_args(argv)
+
+    # Override log file if specified
+    if args.log_file:
+        global LOG_FILE
+        LOG_FILE = Path(args.log_file)
+        _log("info", "log_file_overridden", path=str(LOG_FILE))
 
     if args.check:
         print(
@@ -238,6 +320,7 @@ def main(argv: list[str]) -> int:
 
     # Default mode is watch-stdio (Chrome will not pass args).
     run_watch_stdio(config)
+    _log("info", "process_gate_exiting")
     return 0
 
 

@@ -9,6 +9,27 @@ const RULES = [
 
 const BLOCKED_URL = chrome.runtime.getURL("blocked.html");
 
+// Badge colors
+const BADGE_BLOCKING = { text: "X", color: "#dc2626" }; // Red - blocking
+const BADGE_ALLOWED = { text: "", color: "#16a34a" }; // Green - allowed
+const BADGE_DISCONNECTED = { text: "!", color: "#6b7280" }; // Gray - disconnected
+
+function updateBadge(blocking, connected) {
+  if (!connected) {
+    chrome.action.setBadgeText({ text: BADGE_DISCONNECTED.text });
+    chrome.action.setBadgeBackgroundColor({ color: BADGE_DISCONNECTED.color });
+    chrome.action.setTitle({ title: "X Gate: Native host disconnected" });
+  } else if (blocking) {
+    chrome.action.setBadgeText({ text: BADGE_BLOCKING.text });
+    chrome.action.setBadgeBackgroundColor({ color: BADGE_BLOCKING.color });
+    chrome.action.setTitle({ title: "X Gate: Blocking (Codex/Claude running)" });
+  } else {
+    chrome.action.setBadgeText({ text: BADGE_ALLOWED.text });
+    chrome.action.setBadgeBackgroundColor({ color: BADGE_ALLOWED.color });
+    chrome.action.setTitle({ title: "X Gate: Allowed" });
+  }
+}
+
 function dnrUpdateDynamicRules(update) {
   return new Promise((resolve, reject) => {
     chrome.declarativeNetRequest.updateDynamicRules(update, () => {
@@ -56,6 +77,9 @@ async function setBlock(block, source = "unknown") {
     updated_at_unix: Date.now() / 1000,
     updated_by: source
   };
+
+  // Update badge to reflect current state
+  updateBadge(currentBlock, Boolean(port));
 }
 
 async function ensureKeepaliveAlarm() {
@@ -93,6 +117,8 @@ function connectNative() {
 
     if (msg && typeof msg.block_x === "boolean") {
       lastStatus = { ...msg, received_at_unix: Date.now() / 1000 };
+      // Update badge first to show connected state
+      updateBadge(Boolean(msg.block_x), true);
       setBlock(Boolean(msg.block_x), "native-status").catch(console.error);
     }
   });
@@ -101,6 +127,7 @@ function connectNative() {
     const err = chrome.runtime.lastError;
     if (err) console.warn("Native host disconnected:", err.message);
     port = null;
+    updateBadge(true, false); // Show disconnected state
     setBlock(true, "native-disconnect").catch(console.error);
   });
 
@@ -174,6 +201,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 async function boot() {
   await ensureKeepaliveAlarm();
+  updateBadge(true, false); // Initial state: blocking, not connected
   await setBlock(true, "boot"); // fail-closed until we hear from native host
   connectNative();
 }

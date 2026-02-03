@@ -6,7 +6,6 @@ import platform
 import sys
 from pathlib import Path
 
-
 HOST_NAME = "com.xterm.processgate"
 
 
