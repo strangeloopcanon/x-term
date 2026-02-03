@@ -1,0 +1,126 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>X Gate Settings</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #1a1a2e;
+        --text: #e8eaf1;
+        --muted: #a9b0c3;
+        --accent: #2c66ff;
+        --border: rgba(255, 255, 255, 0.1);
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #ffffff;
+          --text: #101323;
+          --muted: #5c6277;
+          --border: rgba(16, 19, 35, 0.1);
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        width: 280px;
+        margin: 0;
+        padding: 16px;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 14px;
+        background: var(--bg);
+        color: var(--text);
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 12px;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .row:last-child { border-bottom: none; }
+      .label { color: var(--text); }
+      .desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+      
+      /* Toggle switch */
+      .switch {
+        position: relative;
+        width: 44px;
+        height: 24px;
+      }
+      .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background-color: #444;
+        transition: 0.2s;
+        border-radius: 24px;
+      }
+      .slider:before {
+        position: absolute;
+        content: "";
+        height: 18px;
+        width: 18px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: 0.2s;
+        border-radius: 50%;
+      }
+      input:checked + .slider {
+        background-color: var(--accent);
+      }
+      input:checked + .slider:before {
+        transform: translateX(20px);
+      }
+      
+      .status {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+      }
+      .status-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+      }
+      .status-dot.blocking { background: #dc2626; }
+      .status-dot.allowed { background: #16a34a; }
+      .status-dot.disconnected { background: #6b7280; }
+    </style>
+  </head>
+  <body>
+    <h1>X Gate</h1>
+    
+    <div class="row">
+      <div>
+        <div class="label">Reward Mode</div>
+        <div class="desc">Allow X while working</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="invert">
+        <span class="slider"></span>
+      </label>
+    </div>
+    
+    <div class="status">
+      <span class="status-dot" id="status-dot"></span>
+      <span id="status-text">Checking...</span>
+    </div>
+    
+    <script src="popup.js"></script>
+  </body>
+</html>

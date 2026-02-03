@@ -215,6 +215,7 @@ def run_watch_stdio(config: Config) -> None:
 
     while not stop.is_set():
         now = time.time()
+        running = _process_running(config)
         block_x = _block_x_now(config)
 
         should_send = (
@@ -228,6 +229,7 @@ def run_watch_stdio(config: Config) -> None:
             payload = {
                 "type": "status",
                 "block_x": bool(block_x),
+                "process_running": bool(running),  # Raw state for extension to use
                 "timestamp_unix": now,
             }
             try:
@@ -247,11 +249,14 @@ def run_watch_stdio(config: Config) -> None:
                     return
                 if isinstance(msg, dict) and msg.get("type") == "poll":
                     reply_to = msg.get("id")
-                    # Use fresh timestamp for poll replies
+                    # Use fresh timestamp and state for poll replies
                     poll_now = time.time()
+                    poll_running = _process_running(config)
+                    poll_block = _block_x_now(config)
                     payload = {
                         "type": "status",
-                        "block_x": bool(block_x),
+                        "block_x": bool(poll_block),
+                        "process_running": bool(poll_running),
                         "timestamp_unix": poll_now,
                         "reply_to": reply_to,
                     }

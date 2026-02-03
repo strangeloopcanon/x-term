@@ -52,10 +52,41 @@ function buildBlockRules() {
 let port = null;
 let currentBlock = true; // fail-closed until the native host tells us otherwise
 let lastStatus = null;
-let stateApplied = false;
+let processRunning = false; // whether Codex/Claude is running (from native host)
+let invertMode = true; // true = reward mode (allow X while working)
 
 let nextPollId = 1;
 const pendingPolls = new Map(); // id -> { resolve, reject, timeout }
+
+// Load invert setting from storage (async, but we'll also load in boot())
+chrome.storage.local.get(["invert"], (result) => {
+  invertMode = result.invert !== false; // default to true
+});
+
+async function loadInvertSetting() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["invert"], (result) => {
+      invertMode = result.invert !== false;
+      resolve(invertMode);
+    });
+  });
+}
+
+// Listen for storage changes
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.invert) {
+    invertMode = changes.invert.newValue !== false;
+    // Recalculate blocking state
+    const shouldBlock = invertMode ? !processRunning : processRunning;
+    setBlock(shouldBlock, "invert-changed").catch(console.error);
+  }
+});
+
+function computeBlock(running, invert) {
+  // invert=true (reward mode): block when NOT running
+  // invert=false (focus mode): block when running
+  return invert ? !running : running;
+}
 
 async function setBlock(block, source = "unknown") {
   if (currentBlock === block && stateApplied) {
@@ -121,11 +152,23 @@ function connectNative() {
   port.onMessage.addListener((msg) => {
     resolvePoll(msg);
 
-    if (msg && typeof msg.block_x === "boolean") {
+    if (msg && typeof msg.process_running === "boolean") {
+      // Use the raw process_running state from native host
+      processRunning = Boolean(msg.process_running);
       lastStatus = { ...msg, received_at_unix: Date.now() / 1000 };
-      // Update badge first to show connected state
-      updateBadge(Boolean(msg.block_x), true);
-      setBlock(Boolean(msg.block_x), "native-status").catch(console.error);
+      
+      // Apply extension's invert setting
+      const shouldBlock = computeBlock(processRunning, invertMode);
+      updateBadge(shouldBlock, true);
+      setBlock(shouldBlock, "native-status").catch(console.error);
+    } else if (msg && typeof msg.block_x === "boolean") {
+      // Fallback for older native host without process_running field
+      processRunning = Boolean(msg.block_x);
+      lastStatus = { ...msg, received_at_unix: Date.now() / 1000 };
+      
+      const shouldBlock = computeBlock(processRunning, invertMode);
+      updateBadge(shouldBlock, true);
+      setBlock(shouldBlock, "native-status").catch(console.error);
     }
   });
 
@@ -176,8 +219,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({
       block_x: currentBlock,
       last_status: lastStatus,
-      native_connected: Boolean(port)
+      native_connected: Boolean(port),
+      invert: invertMode,
+      process_running: processRunning
     });
+    return;
+  }
+
+  if (msg.type === "set_invert") {
+    invertMode = Boolean(msg.invert);
+    chrome.storage.local.set({ invert: invertMode });
+    const shouldBlock = computeBlock(processRunning, invertMode);
+    setBlock(shouldBlock, "invert-changed").catch(console.error);
+    sendResponse({ ok: true, invert: invertMode });
     return;
   }
 
@@ -206,6 +260,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 async function boot() {
+  await loadInvertSetting();
   await ensureKeepaliveAlarm();
   updateBadge(true, false); // Initial state: blocking, not connected
   await setBlock(true, "boot"); // fail-closed until we hear from native host

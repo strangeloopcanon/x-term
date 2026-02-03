@@ -3,6 +3,6 @@
   "require_tty": true,
   "poll_interval_seconds": 1.0,
   "heartbeat_seconds": 15.0,
-  "invert": true
+  "invert": false
 }
 
