@@ -1,0 +1,7 @@
+{
+  "watch_regex": "(?i)\\b(codex|claude(?:-code)?|claude_code)\\b",
+  "require_tty": true,
+  "poll_interval_seconds": 1.0,
+  "heartbeat_seconds": 15.0
+}
+

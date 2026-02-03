@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "X Gate (Codex/Claude)",
+  "version": "0.1.0",
+  "description": "Blocks X/Twitter while Codex or Claude Code is running in a terminal.",
+  "permissions": [
+    "alarms",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "*://*.x.com/*",
+    "*://x.com/*",
+    "*://*.twitter.com/*",
+    "*://twitter.com/*",
+    "*://t.co/*"
+  ],
+  "background": { "service_worker": "sw.js" },
+  "action": { "default_title": "X Gate" },
+  "web_accessible_resources": [
+    {
+      "resources": ["blocked.html", "blocked.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
+

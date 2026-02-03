@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>X blocked</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b0d12;
+        --card: #121623;
+        --text: #e8eaf1;
+        --muted: #a9b0c3;
+        --btn: #2c66ff;
+        --btnText: #ffffff;
+        --border: rgba(255, 255, 255, 0.08);
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f7f8fb;
+          --card: #ffffff;
+          --text: #101323;
+          --muted: #5c6277;
+          --btn: #2c66ff;
+          --btnText: #ffffff;
+          --border: rgba(16, 19, 35, 0.12);
+        }
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .wrap {
+        max-width: 760px;
+        margin: 72px auto;
+        padding: 0 20px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 22px 22px 18px;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 10px;
+      }
+      p {
+        margin: 0 0 12px;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 14px;
+      }
+      button,
+      a.btn {
+        appearance: none;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        padding: 10px 12px;
+        border-radius: 10px;
+        font-weight: 600;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      button.primary {
+        background: var(--btn);
+        border-color: transparent;
+        color: var(--btnText);
+      }
+      .status {
+        margin-top: 14px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        font-size: 12px;
+        color: var(--muted);
+        white-space: pre-wrap;
+        user-select: text;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>X is blocked</h1>
+        <p>
+          X/Twitter is blocked while Codex or Claude Code is running in a
+          terminal.
+        </p>
+        <div class="row">
+          <button id="check" class="primary">Check again</button>
+          <a class="btn" href="https://x.com/" rel="noreferrer">Open X</a>
+        </div>
+        <div id="status" class="status">Checking…</div>
+      </div>
+    </div>
+    <script src="blocked.js"></script>
+  </body>
+</html>
+
