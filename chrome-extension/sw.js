@@ -52,6 +52,7 @@ function buildBlockRules() {
 let port = null;
 let currentBlock = true; // fail-closed until the native host tells us otherwise
 let lastStatus = null;
+let stateApplied = false; // track if we've applied DNR rules at least once
 let processRunning = false; // whether Codex/Claude is running (from native host)
 let invertMode = true; // true = reward mode (allow X while working)
 
