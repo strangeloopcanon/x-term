@@ -27,9 +27,11 @@ python3 native-host/install.py --extension-id YOUR_EXTENSION_ID
 
 ## Test
 
-- Start `codex` or `claude` from a terminal.
-- Navigate to `https://x.com` → you should see the block page.
-- Quit the process → within ~1–2 seconds, navigation should work again.
+With default config (`invert: true`):
+
+1. **Without** Codex/Claude running → `https://x.com` should be **blocked**
+2. Start `codex` or `claude` in a terminal → X should become **accessible**
+3. Quit the process → X should be blocked again within ~1-2 seconds
 
 ## Debug
 
