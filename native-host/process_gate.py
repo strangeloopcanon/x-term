@@ -296,6 +296,13 @@ def main(argv: list[str]) -> int:
         default=None,
         help="Override log file path (default: ~/Library/Logs/x-term/ on macOS).",
     )
+    # Chrome passes the extension origin as a positional argument - accept and ignore it
+    parser.add_argument(
+        "chrome_origin",
+        nargs="?",
+        default=None,
+        help=argparse.SUPPRESS,  # Hidden; Chrome passes chrome-extension://... here
+    )
     args = parser.parse_args(argv)
 
     # Override log file if specified
