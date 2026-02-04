@@ -36,3 +36,7 @@ Thumbs.db
 
 # Ruff cache
 .ruff_cache/
+
+# Local tooling state
+.beads/
+.cursor/

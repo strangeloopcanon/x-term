@@ -1,0 +1,20 @@
+{
+  "blocklist": [
+    "x.com",
+    "twitter.com",
+    "t.co"
+  ],
+  "enabled": true,
+  "include_www": true,
+  "poll_interval_seconds": 1.0,
+  "process": {
+    "active_grace_seconds": 15.0,
+    "consider_children_active": true,
+    "cpu_active_threshold_percent": 1.0,
+    "enable_nettop": true,
+    "net_active_threshold_bytes": 1,
+    "require_tty": true,
+    "watch_regex": "(?i)\\b(codex|claude(?:-code)?|claude_code)\\b"
+  },
+  "reward_mode": true
+}

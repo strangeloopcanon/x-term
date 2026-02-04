@@ -1,17 +1,15 @@
-"""Tests for the native host process detection logic."""
+"""Tests for the process detection logic."""
 from __future__ import annotations
 
+import json
 import re
-import sys
-from pathlib import Path
+from dataclasses import replace
 from unittest.mock import patch
 
 import pytest
 
-# Add native-host to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "native-host"))
-
-from process_gate import DEFAULT_CONFIG, Config, _block_x_now, _has_tty, _load_config
+from xgate.config import DEFAULT_CONFIG, ensure_config, load_config
+from xgate.process_gate import ProcessGate, ProcessInfo, _has_tty, _process_active
 
 
 class TestHasTty:
@@ -48,7 +46,7 @@ class TestWatchRegex:
 
     @pytest.fixture
     def pattern(self):
-        return re.compile(DEFAULT_CONFIG.watch_regex)
+        return re.compile(DEFAULT_CONFIG.process.watch_regex)
 
     @pytest.mark.parametrize("cmd,should_match", [
         # Should match - basic cases
@@ -88,89 +86,95 @@ class TestBlockXNow:
 
     @pytest.fixture
     def config(self):
-        return DEFAULT_CONFIG
+        return replace(DEFAULT_CONFIG.process, enable_nettop=False)
 
     @pytest.fixture
     def config_no_tty(self):
-        return Config(
-            watch_regex=DEFAULT_CONFIG.watch_regex,
-            require_tty=False,
-            poll_interval_seconds=1.0,
-            heartbeat_seconds=15.0,
-            invert=False,
-        )
+        return replace(DEFAULT_CONFIG.process, require_tty=False, enable_nettop=False)
 
     def test_detects_codex_with_tty(self, config):
         """Should detect codex process with TTY."""
         mock_ps_output = """\
-  1234 ttys001 /bin/zsh
-  5678 ttys002 node /path/to/codex resume abc123
-  9999 ??      /usr/bin/some_daemon
+  1234 1 ttys001 0.0 /bin/zsh
+  5678 1 ttys002 0.1 node /path/to/codex resume abc123
+  9999 1 ??      0.0 /usr/bin/some_daemon
 """
         with (
             patch("subprocess.check_output", return_value=mock_ps_output),
             patch("platform.system", return_value="Darwin"),
         ):
-            assert _block_x_now(config) is True
+            gate = ProcessGate(config)
+            running, _active, _debug = gate.poll()
+            assert running is True
 
     def test_ignores_codex_without_tty_when_required(self, config):
         """Should ignore codex if it has no TTY and require_tty=True."""
         mock_ps_output = """\
-  1234 ttys001 /bin/zsh
-  5678 ??      node /path/to/codex resume abc123
+  1234 1 ttys001 0.0 /bin/zsh
+  5678 1 ??      0.0 node /path/to/codex resume abc123
 """
         with (
             patch("subprocess.check_output", return_value=mock_ps_output),
             patch("platform.system", return_value="Darwin"),
         ):
-            assert _block_x_now(config) is False
+            gate = ProcessGate(config)
+            running, _active, _debug = gate.poll()
+            assert running is False
 
     def test_detects_codex_without_tty_when_not_required(self, config_no_tty):
         """Should detect codex without TTY when require_tty=False."""
         mock_ps_output = """\
-  1234 ttys001 /bin/zsh
-  5678 ??      node /path/to/codex resume abc123
+  1234 1 ttys001 0.0 /bin/zsh
+  5678 1 ??      0.0 node /path/to/codex resume abc123
 """
         with (
             patch("subprocess.check_output", return_value=mock_ps_output),
             patch("platform.system", return_value="Darwin"),
         ):
-            assert _block_x_now(config_no_tty) is True
+            gate = ProcessGate(config_no_tty)
+            running, _active, _debug = gate.poll()
+            assert running is True
 
     def test_detects_claude(self, config):
         """Should detect claude process."""
         mock_ps_output = """\
-  1234 ttys001 claude --model opus
+  1234 1 ttys001 0.0 claude --model opus
 """
         with (
             patch("subprocess.check_output", return_value=mock_ps_output),
             patch("platform.system", return_value="Darwin"),
         ):
-            assert _block_x_now(config) is True
+            gate = ProcessGate(config)
+            running, _active, _debug = gate.poll()
+            assert running is True
 
     def test_detects_claude_code(self, config):
         """Should detect claude-code process."""
         mock_ps_output = """\
-  1234 ttys001 /usr/local/bin/claude-code
+  1234 1 ttys001 0.0 /usr/local/bin/claude-code
 """
         with (
             patch("subprocess.check_output", return_value=mock_ps_output),
             patch("platform.system", return_value="Darwin"),
         ):
-            assert _block_x_now(config) is True
+            gate = ProcessGate(config)
+            running, _active, _debug = gate.poll()
+            assert running is True
 
     def test_no_matching_process(self, config):
         """Should return False when no matching process."""
         mock_ps_output = """\
-  1234 ttys001 /bin/zsh
-  5678 ttys002 vim file.py
-  9999 ttys003 python script.py
+  1234 1 ttys001 0.0 /bin/zsh
+  5678 1 ttys002 0.0 vim file.py
+  9999 1 ttys003 0.0 python script.py
 """
         with (
             patch("subprocess.check_output", return_value=mock_ps_output),
             patch("platform.system", return_value="Darwin"),
         ):
-            assert _block_x_now(config) is False
+            gate = ProcessGate(config)
+            running, _active, _debug = gate.poll()
+            assert running is False
 
     def test_empty_output(self, config):
         """Should return False for empty ps output."""
@@ -178,7 +182,9 @@ class TestBlockXNow:
             patch("subprocess.check_output", return_value=""),
             patch("platform.system", return_value="Darwin"),
         ):
-            assert _block_x_now(config) is False
+            gate = ProcessGate(config)
+            running, _active, _debug = gate.poll()
+            assert running is False
 
 
 class TestLoadConfig:
@@ -186,28 +192,123 @@ class TestLoadConfig:
 
     def test_loads_defaults_when_file_missing(self, tmp_path, monkeypatch):
         """Should use defaults when config file doesn't exist."""
-        monkeypatch.setenv("XTERM_PROCESS_GATE_CONFIG", str(tmp_path / "nonexistent.json"))
-        config = _load_config()
-        assert config.watch_regex == DEFAULT_CONFIG.watch_regex
-        assert config.require_tty == DEFAULT_CONFIG.require_tty
+        config_file = tmp_path / "config.json"
+        config = ensure_config(config_file)
+        assert config.process.watch_regex == DEFAULT_CONFIG.process.watch_regex
+        assert config.process.require_tty == DEFAULT_CONFIG.process.require_tty
 
-    def test_loads_custom_config(self, tmp_path, monkeypatch):
+    def test_loads_custom_config(self, tmp_path):
         """Should load values from config file."""
         config_file = tmp_path / "config.json"
-        config_file.write_text('{"require_tty": false, "poll_interval_seconds": 2.0}')
-        monkeypatch.setenv("XTERM_PROCESS_GATE_CONFIG", str(config_file))
+        config_file.write_text(
+            '{"process": {"require_tty": false}, "poll_interval_seconds": 2.0}',
+            encoding="utf-8",
+        )
 
-        config = _load_config()
-        assert config.require_tty is False
+        config = load_config(config_file)
+        assert config.process.require_tty is False
         assert config.poll_interval_seconds == 2.0
-        # Defaults should still apply for unspecified values
-        assert config.watch_regex == DEFAULT_CONFIG.watch_regex
+        assert config.process.watch_regex == DEFAULT_CONFIG.process.watch_regex
 
-    def test_handles_invalid_json(self, tmp_path, monkeypatch):
+    def test_handles_invalid_json(self, tmp_path):
         """Should use defaults when config file has invalid JSON."""
         config_file = tmp_path / "config.json"
         config_file.write_text("not valid json {{{")
-        monkeypatch.setenv("XTERM_PROCESS_GATE_CONFIG", str(config_file))
+        with pytest.raises(json.JSONDecodeError):
+            load_config(config_file)
 
-        config = _load_config()
-        assert config == DEFAULT_CONFIG
+
+class TestProcessActive:
+    """Tests for the "active work" heuristic."""
+
+    def test_cpu_activity_marks_active(self):
+        config = replace(
+            DEFAULT_CONFIG.process,
+            enable_nettop=False,
+            consider_children_active=False,
+            cpu_active_threshold_percent=1.0,
+        )
+        proc = ProcessInfo(
+            pid="100",
+            ppid="1",
+            tty="ttys001",
+            cpu_percent=5.0,
+            cmd="codex",
+        )
+
+        active, last_active_at, debug = _process_active(
+            config,
+            now=123.0,
+            matches=[proc],
+            children_map={},
+            prev_net_totals={},
+            last_active_at=0.0,
+        )
+
+        assert active is True
+        assert last_active_at == 123.0
+        assert "cpu" in debug["evidence"]
+
+    def test_child_cpu_marks_active(self):
+        config = replace(
+            DEFAULT_CONFIG.process,
+            enable_nettop=False,
+            consider_children_active=True,
+            cpu_active_threshold_percent=1.0,
+        )
+        proc = ProcessInfo(
+            pid="100",
+            ppid="1",
+            tty="ttys001",
+            cpu_percent=0.0,
+            cmd="codex",
+        )
+        child = ProcessInfo(
+            pid="101",
+            ppid="100",
+            tty="ttys001",
+            cpu_percent=5.0,
+            cmd="pytest -q",
+        )
+
+        active, last_active_at, debug = _process_active(
+            config,
+            now=10.0,
+            matches=[proc],
+            children_map={"100": [child]},
+            prev_net_totals={},
+            last_active_at=0.0,
+        )
+
+        assert active is True
+        assert last_active_at == 10.0
+        assert "child_cpu" in debug["evidence"]
+
+    def test_grace_window_prevents_flapping(self):
+        config = replace(
+            DEFAULT_CONFIG.process,
+            enable_nettop=False,
+            consider_children_active=False,
+            cpu_active_threshold_percent=999.0,
+            active_grace_seconds=4.0,
+        )
+        proc = ProcessInfo(
+            pid="100",
+            ppid="1",
+            tty="ttys001",
+            cpu_percent=0.0,
+            cmd="codex",
+        )
+
+        active, last_active_at, debug = _process_active(
+            config,
+            now=10.0,
+            matches=[proc],
+            children_map={},
+            prev_net_totals={},
+            last_active_at=8.0,
+        )
+
+        assert active is True
+        assert last_active_at == 8.0
+        assert "grace" in debug["evidence"]

@@ -1,58 +1,98 @@
 # x-term (X gate)
 
-Controls access to X/Twitter (`x.com`, `twitter.com`, `t.co`) in Google Chrome based on whether **Codex** or **Claude Code** is running in a terminal.
+So what: a **global X/Twitter gate** that flips based on whether **Codex or Claude Code is actively working**.
+It edits `/etc/hosts` via a tiny root daemon, and you control it from a CLI or a menu bar toggle.
 
-**Default behavior (invert: true):** X is *allowed* while Codex/Claude is running, *blocked* when not working.
+## Quick start (macOS)
 
-## How it works
-
-- A **Chrome Manifest V3 extension** adds/removes a `declarativeNetRequest` rule that redirects X/Twitter to a local “Blocked” page.
-- A **native messaging host** (`native-host/process_gate.py`) watches processes and reports whether `codex` or `claude` is running with a real TTY.
-
-## Install (macOS / Linux)
-
-1) Load the extension:
-   - Chrome → `chrome://extensions`
-   - Enable **Developer mode**
-   - **Load unpacked** → select `chrome-extension/`
-   - Copy the extension ID
-
-2) Register the native host (writes the native host manifest for Chrome):
+1) Create your config:
 
 ```bash
-python3 native-host/install.py --extension-id YOUR_EXTENSION_ID
+./bin/xgate init
 ```
 
-3) Restart Chrome.
-
-## Test
-
-With default config (`invert: true`):
-
-1. **Without** Codex/Claude running → `https://x.com` should be **blocked**
-2. Start `codex` or `claude` in a terminal → X should become **accessible**
-3. Quit the process → X should be blocked again within ~1-2 seconds
-
-## Debug
+2) Install the daemon (requires sudo):
 
 ```bash
-python3 native-host/process_gate.py --check
-python3 native-host/process_gate.py --watch-stdio
-python3 native-host/smoke_test.py
+sudo ./bin/xgate daemon install
 ```
 
-## Configure
+3) (Optional) Install the menu bar toggle (requires [SwiftBar](https://swiftbar.app)):
 
-Edit `native-host/process_gate.config.json`:
+```bash
+./bin/xgate menubar install
+```
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `invert` | `true` | If true: block X when Codex/Claude is NOT running (reward mode). If false: block when running (focus mode). |
-| `watch_regex` | `(?i)\b(codex\|claude...)\b` | Regex to detect Codex/Claude processes |
-| `require_tty` | `true` | Only count processes attached to a real terminal |
-| `poll_interval_seconds` | `1.0` | How often to check for processes |
-| `heartbeat_seconds` | `15.0` | Status message cadence (keeps extension alive)
+4) Check status:
 
-## Logs
+```bash
+./bin/xgate status
+```
 
-Logs are written to `~/Library/Logs/x-term/process_gate.log` (macOS) or `~/.cache/x-term/process_gate.log` (Linux).
+## How it decides ALLOW vs BLOCK
+
+There are two knobs:
+
+- **Enabled**: master switch.
+- **Reward mode**: which side counts as the “reward”.
+
+When **Enabled is Off**, the gate does nothing (X/Twitter is allowed).
+
+When **Enabled is On**, the gate watches Codex/Claude and treats it as either:
+
+- **Active**: doing work right now
+- **Idle**: open, but waiting on you / not doing work
+
+Then it applies this rule:
+
+| Enabled | Reward mode | Active | Idle |
+| --- | --- | --- | --- |
+| Off | (either) | ALLOW | ALLOW |
+| On | On | ALLOW | BLOCK |
+| On | Off | BLOCK | ALLOW |
+
+In plain English:
+
+- **Reward mode ON**: “I can browse X while I’m working; block it when I’m not.”
+- **Reward mode OFF**: “Block X while I’m working; allow it otherwise.”
+
+## Daily commands
+
+```bash
+./bin/xgate reward on
+./bin/xgate reward off
+./bin/xgate enable
+./bin/xgate disable
+./bin/xgate blocklist add x.com
+./bin/xgate blocklist add --prompt
+./bin/xgate blocklist list
+./bin/xgate chrome reset-network
+./bin/xgate chrome restart
+```
+
+## Config
+
+Default config path:
+
+- macOS: `~/Library/Application Support/x-gate/config.json`
+
+Override with:
+
+```bash
+XGATE_CONFIG=/path/to/config.json ./bin/xgate status
+```
+
+### Default blocklist
+
+`x.com`, `twitter.com`, `t.co` (plus `www.` variants).
+
+<details>
+<summary>▶ Notes and caveats</summary>
+
+- Editing `/etc/hosts` is global (affects all apps).
+- DNS cache is flushed on changes (macOS).
+- Chrome can keep DNS/sockets/tabs alive across flips; use `./bin/xgate chrome reset-network` (or `./bin/xgate chrome restart`) to apply immediately.
+- If Chrome uses Secure DNS with a custom resolver, hosts-based blocking can be inconsistent.
+- Cancelling the domain prompt leaves your blocklist unchanged.
+
+</details>

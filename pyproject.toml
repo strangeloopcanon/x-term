@@ -2,7 +2,7 @@
 name = "x-term"
 version = "0.1.0"
 description = "Blocks X/Twitter while Codex or Claude Code is running"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 
 [project.optional-dependencies]
 dev = [
@@ -18,7 +18,7 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short"
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py39"
 line-length = 100
 
 [tool.ruff.lint]
@@ -26,7 +26,7 @@ select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]  # Line length handled separately
 
 [tool.coverage.run]
-source = ["native-host"]
+source = ["xgate"]
 omit = ["tests/*"]
 
 [tool.coverage.report]
