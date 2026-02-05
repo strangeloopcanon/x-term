@@ -16,6 +16,16 @@ MENUBAR_PLUGIN_NAME = "xgate.10s.sh"
 MENUBAR_PLUGIN_LEGACY = "xgate.1m.sh"
 
 
+class LaunchctlError(RuntimeError):
+    def __init__(self, args: list[str], returncode: int, detail: str):
+        self.args_list = list(args)
+        self.returncode = int(returncode)
+        self.detail = detail
+        super().__init__(
+            f"launchctl {' '.join(args)} failed ({returncode}): {detail}"
+        )
+
+
 def _require_root() -> None:
     if os.geteuid() != 0:
         raise PermissionError("root required")
@@ -36,7 +46,7 @@ def _launchctl(args: list[str], *, tolerate_no_such_process: bool = False) -> su
         return result
 
     detail = stderr or (result.stdout or "").strip() or "unknown error"
-    raise RuntimeError(f"launchctl {' '.join(args)} failed ({result.returncode}): {detail}")
+    raise LaunchctlError(args, result.returncode, detail)
 
 
 def _repo_root() -> Path:
@@ -152,15 +162,21 @@ def install_daemon(config_path: Path) -> None:
     _launchctl(["bootout", f"system/{LABEL}"], tolerate_no_such_process=True)
     try:
         _launchctl(["bootstrap", "system", str(PLIST_PATH)])
-    except RuntimeError as exc:
+    except LaunchctlError as exc:
         # launchctl can return EIO if the label is already loaded in some states.
         # Verify whether the service is present before treating this as fatal.
         if daemon_status()["code"] != 0:
             raise
-        if "Input/output error" not in str(exc):
+        if exc.returncode != 5 and "Input/output error" not in exc.detail:
             raise
     _launchctl(["enable", f"system/{LABEL}"])
-    _launchctl(["kickstart", "-k", f"system/{LABEL}"])
+    try:
+        _launchctl(["kickstart", "-k", f"system/{LABEL}"])
+    except LaunchctlError:
+        # kickstart can fail with "unknown error" on some launchd states.
+        # If the service is present, keep install successful and rely on KeepAlive/RunAtLoad.
+        if daemon_status()["code"] != 0:
+            raise
 
 
 def uninstall_daemon() -> None:
