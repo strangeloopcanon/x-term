@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from xgate.config import DEFAULT_CONFIG, ensure_config, load_config
-from xgate.process_gate import ProcessGate, ProcessInfo, _has_tty, _process_active
+from xgate.process_gate import ProcessGate, ProcessInfo, ProcessMatch, _has_tty, _process_active
 
 
 class TestHasTty:
@@ -80,6 +80,20 @@ class TestWatchRegex:
         result = bool(pattern.search(cmd))
         assert result == should_match, f"Expected {cmd!r} to {'match' if should_match else 'not match'}"
 
+    @pytest.fixture
+    def app_pattern(self):
+        return re.compile(DEFAULT_CONFIG.process.app_watch_regex)
+
+    @pytest.mark.parametrize("cmd,should_match", [
+        ("codex app-server --analytics-default-enabled", True),
+        ("/Applications/Codex.app/Contents/Resources/codex app-server", True),
+        ("codex", False),
+        ("claude-code", False),
+    ])
+    def test_app_regex_matching(self, app_pattern, cmd, should_match):
+        result = bool(app_pattern.search(cmd))
+        assert result == should_match
+
 
 class TestBlockXNow:
     """Tests for process detection with mocked subprocess."""
@@ -134,6 +148,34 @@ class TestBlockXNow:
             gate = ProcessGate(config_no_tty)
             running, _active, _debug = gate.poll()
             assert running is True
+
+    def test_detects_codex_app_server_without_tty(self, config):
+        """Should detect Codex app backend process via app watcher."""
+        mock_ps_output = """\
+  1234 1 ??      0.0 /Applications/Codex.app/Contents/MacOS/Codex
+  5678 1 ??      0.1 /Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled
+"""
+        with (
+            patch("subprocess.check_output", return_value=mock_ps_output),
+            patch("platform.system", return_value="Darwin"),
+        ):
+            gate = ProcessGate(config)
+            running, _active, _debug = gate.poll()
+            assert running is True
+
+    def test_ignores_codex_app_server_when_app_watcher_disabled(self, config):
+        """Should not detect app backend if app watcher regex is empty."""
+        mock_ps_output = """\
+  1234 1 ??      0.0 /Applications/Codex.app/Contents/MacOS/Codex
+  5678 1 ??      0.1 /Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled
+"""
+        with (
+            patch("subprocess.check_output", return_value=mock_ps_output),
+            patch("platform.system", return_value="Darwin"),
+        ):
+            gate = ProcessGate(replace(config, app_watch_regex=""))
+            running, _active, _debug = gate.poll()
+            assert running is False
 
     def test_detects_claude(self, config):
         """Should detect claude process."""
@@ -196,6 +238,8 @@ class TestLoadConfig:
         config = ensure_config(config_file)
         assert config.process.watch_regex == DEFAULT_CONFIG.process.watch_regex
         assert config.process.require_tty == DEFAULT_CONFIG.process.require_tty
+        assert config.process.app_watch_regex == DEFAULT_CONFIG.process.app_watch_regex
+        assert config.process.app_require_tty == DEFAULT_CONFIG.process.app_require_tty
 
     def test_loads_custom_config(self, tmp_path):
         """Should load values from config file."""
@@ -209,6 +253,7 @@ class TestLoadConfig:
         assert config.process.require_tty is False
         assert config.poll_interval_seconds == 2.0
         assert config.process.watch_regex == DEFAULT_CONFIG.process.watch_regex
+        assert config.process.app_watch_regex == DEFAULT_CONFIG.process.app_watch_regex
 
     def test_handles_invalid_json(self, tmp_path):
         """Should use defaults when config file has invalid JSON."""
@@ -239,7 +284,7 @@ class TestProcessActive:
         active, last_active_at, debug = _process_active(
             config,
             now=123.0,
-            matches=[proc],
+            matches=[ProcessMatch(process=proc, source="terminal")],
             children_map={},
             prev_net_totals={},
             last_active_at=0.0,
@@ -247,7 +292,7 @@ class TestProcessActive:
 
         assert active is True
         assert last_active_at == 123.0
-        assert "cpu" in debug["evidence"]
+        assert "cpu:terminal" in debug["evidence"]
 
     def test_child_cpu_marks_active(self):
         config = replace(
@@ -274,7 +319,7 @@ class TestProcessActive:
         active, last_active_at, debug = _process_active(
             config,
             now=10.0,
-            matches=[proc],
+            matches=[ProcessMatch(process=proc, source="terminal")],
             children_map={"100": [child]},
             prev_net_totals={},
             last_active_at=0.0,
@@ -282,7 +327,7 @@ class TestProcessActive:
 
         assert active is True
         assert last_active_at == 10.0
-        assert "child_cpu" in debug["evidence"]
+        assert "child_cpu:terminal" in debug["evidence"]
 
     def test_grace_window_prevents_flapping(self):
         config = replace(
@@ -303,7 +348,7 @@ class TestProcessActive:
         active, last_active_at, debug = _process_active(
             config,
             now=10.0,
-            matches=[proc],
+            matches=[ProcessMatch(process=proc, source="terminal")],
             children_map={},
             prev_net_totals={},
             last_active_at=8.0,

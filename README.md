@@ -1,6 +1,6 @@
 # x-term (X gate)
 
-So what: a **global X/Twitter gate** that flips based on whether **Codex or Claude Code is actively working**.
+So what: a **global X/Twitter gate** that flips based on whether **Codex or Claude is actively working**.
 It edits `/etc/hosts` via a tiny root daemon, and you control it from a CLI or a menu bar toggle.
 
 ## Quick start (macOS)
@@ -38,7 +38,12 @@ There are two knobs:
 
 When **Enabled is Off**, the gate does nothing (X/Twitter is allowed).
 
-When **Enabled is On**, the gate watches Codex/Claude and treats it as either:
+When **Enabled is On**, the gate watches:
+
+- terminal sessions (`codex`, `claude`, `claude-code`)
+- Codex app backend (`codex app-server`)
+
+It treats activity as either:
 
 - **Active**: doing work right now
 - **Idle**: open, but waiting on you / not doing work

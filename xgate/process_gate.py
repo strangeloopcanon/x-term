@@ -7,6 +7,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from re import Pattern
 from typing import Any
 
 from .config import ProcessConfig
@@ -49,6 +50,19 @@ class ProcessInfo:
     cmd: str
 
 
+@dataclass(frozen=True)
+class ProcessMatch:
+    process: ProcessInfo
+    source: str
+
+
+@dataclass(frozen=True)
+class Watcher:
+    source: str
+    pattern: Pattern[str]
+    require_tty: bool
+
+
 def _has_tty(tty: str) -> bool:
     return tty not in {"?", "??"} and "?" not in tty
 
@@ -77,14 +91,41 @@ def _list_processes_macos_linux() -> list[ProcessInfo]:
     return rows
 
 
-def _matching_processes(processes: list[ProcessInfo], config: ProcessConfig) -> list[ProcessInfo]:
-    watch = re.compile(config.watch_regex)
-    matches: list[ProcessInfo] = []
+def _watchers(config: ProcessConfig) -> list[Watcher]:
+    watchers: list[Watcher] = []
+    if config.watch_regex.strip():
+        watchers.append(
+            Watcher(
+                source="terminal",
+                pattern=re.compile(config.watch_regex),
+                require_tty=config.require_tty,
+            )
+        )
+    if config.app_watch_regex.strip():
+        watchers.append(
+            Watcher(
+                source="codex_app",
+                pattern=re.compile(config.app_watch_regex),
+                require_tty=config.app_require_tty,
+            )
+        )
+    return watchers
+
+
+def _matching_processes(processes: list[ProcessInfo], config: ProcessConfig) -> list[ProcessMatch]:
+    watchers = _watchers(config)
+    matches: list[ProcessMatch] = []
+    seen: set[str] = set()
     for proc in processes:
-        if config.require_tty and not _has_tty(proc.tty):
-            continue
-        if watch.search(proc.cmd):
-            matches.append(proc)
+        for watcher in watchers:
+            if watcher.require_tty and not _has_tty(proc.tty):
+                continue
+            if not watcher.pattern.search(proc.cmd):
+                continue
+            if proc.pid not in seen:
+                matches.append(ProcessMatch(process=proc, source=watcher.source))
+                seen.add(proc.pid)
+            break
     return matches
 
 
@@ -151,7 +192,7 @@ def _process_active(
     config: ProcessConfig,
     *,
     now: float,
-    matches: list[ProcessInfo],
+    matches: list[ProcessMatch],
     children_map: dict[str, list[ProcessInfo]],
     prev_net_totals: dict[str, tuple[int, int]],
     last_active_at: float,
@@ -163,10 +204,11 @@ def _process_active(
     active_now = False
 
     if config.cpu_active_threshold_percent > 0:
-        for proc in matches:
+        for match in matches:
+            proc = match.process
             if proc.cpu_percent >= config.cpu_active_threshold_percent:
                 active_now = True
-                evidence.append("cpu")
+                evidence.append(f"cpu:{match.source}")
                 break
 
     if (
@@ -175,19 +217,20 @@ def _process_active(
         and config.cpu_active_threshold_percent > 0
         and children_map
     ):
-        watch = re.compile(config.watch_regex)
-        match_pids = {p.pid for p in matches}
-        for proc in matches:
+        watchers = _watchers(config)
+        match_pids = {match.process.pid for match in matches}
+        for match in matches:
+            proc = match.process
             for child in _descendants_of(proc.pid, children_map):
                 if child.pid in match_pids:
                     continue
-                if watch.search(child.cmd):
+                if any(watcher.pattern.search(child.cmd) for watcher in watchers):
                     continue
                 if proc.tty and child.tty and proc.tty != child.tty:
                     continue
                 if child.cpu_percent >= config.cpu_active_threshold_percent:
                     active_now = True
-                    evidence.append("child_cpu")
+                    evidence.append(f"child_cpu:{match.source}")
                     break
             if active_now:
                 break
@@ -198,7 +241,8 @@ def _process_active(
         and platform.system() == "Darwin"
         and config.net_active_threshold_bytes > 0
     ):
-        pids = [p.pid for p in matches]
+        source_by_pid = {match.process.pid: match.source for match in matches}
+        pids = list(source_by_pid)
         totals = _nettop_totals_for_pids(pids)
 
         for pid in pids:
@@ -212,7 +256,7 @@ def _process_active(
             delta = max(0, (cur[0] + cur[1]) - (prev[0] + prev[1]))
             if delta >= config.net_active_threshold_bytes:
                 active_now = True
-                evidence.append("net")
+                evidence.append(f"net:{source_by_pid.get(pid, 'unknown')}")
                 break
 
     new_last_active_at = last_active_at
@@ -227,6 +271,7 @@ def _process_active(
 
     debug = {
         "evidence": evidence,
+        "matched_sources": sorted({match.source for match in matches}),
         "active_grace_seconds": config.active_grace_seconds,
         "cpu_active_threshold_percent": config.cpu_active_threshold_percent,
         "net_active_threshold_bytes": config.net_active_threshold_bytes,
@@ -254,13 +299,17 @@ class ProcessGate:
             _log("warning", "ps_error", error=str(exc))
             return False, False, {"evidence": ["ps_error"]}
 
-        matches = _matching_processes(processes, self.config)
+        try:
+            matches = _matching_processes(processes, self.config)
+        except re.error as exc:
+            _log("warning", "watch_regex_error", error=str(exc))
+            return False, False, {"evidence": ["watch_regex_error"]}
         if not matches:
             self.last_active_at = 0.0
             self.prev_net_totals = {}
             return False, False, {"evidence": []}
 
-        match_pids = {p.pid for p in matches}
+        match_pids = {match.process.pid for match in matches}
         self.prev_net_totals = {
             pid: totals for pid, totals in self.prev_net_totals.items() if pid in match_pids
         }
@@ -290,5 +339,11 @@ class ProcessGate:
             )
         except Exception:
             return False
-        watch = re.compile(self.config.watch_regex)
-        return any(watch.search(line or "") for line in out.splitlines())
+        try:
+            watchers = _watchers(self.config)
+        except re.error:
+            return False
+        for line in out.splitlines():
+            if any(watcher.pattern.search(line or "") for watcher in watchers):
+                return True
+        return False

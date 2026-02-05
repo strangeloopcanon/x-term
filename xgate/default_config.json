@@ -8,6 +8,8 @@
   "poll_interval_seconds": 1.0,
   "process": {
     "active_grace_seconds": 15.0,
+    "app_require_tty": false,
+    "app_watch_regex": "(?i)\\bcodex app-server\\b",
     "consider_children_active": true,
     "cpu_active_threshold_percent": 1.0,
     "enable_nettop": true,

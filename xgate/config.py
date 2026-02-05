@@ -10,6 +10,8 @@ from typing import Any
 class ProcessConfig:
     watch_regex: str
     require_tty: bool
+    app_watch_regex: str
+    app_require_tty: bool
     active_grace_seconds: float
     cpu_active_threshold_percent: float
     net_active_threshold_bytes: int
@@ -30,6 +32,8 @@ class GateConfig:
 DEFAULT_PROCESS_CONFIG = ProcessConfig(
     watch_regex=r"(?i)\b(codex|claude(?:-code)?|claude_code)\b",
     require_tty=True,
+    app_watch_regex=r"(?i)\bcodex app-server\b",
+    app_require_tty=False,
     active_grace_seconds=15.0,
     cpu_active_threshold_percent=1.0,
     net_active_threshold_bytes=1,
@@ -59,6 +63,8 @@ def _process_from_dict(data: dict[str, Any] | None) -> ProcessConfig:
     return ProcessConfig(
         watch_regex=str(_get(data, "watch_regex", DEFAULT_PROCESS_CONFIG.watch_regex)),
         require_tty=bool(_get(data, "require_tty", DEFAULT_PROCESS_CONFIG.require_tty)),
+        app_watch_regex=str(_get(data, "app_watch_regex", DEFAULT_PROCESS_CONFIG.app_watch_regex)),
+        app_require_tty=bool(_get(data, "app_require_tty", DEFAULT_PROCESS_CONFIG.app_require_tty)),
         active_grace_seconds=float(
             _get(data, "active_grace_seconds", DEFAULT_PROCESS_CONFIG.active_grace_seconds)
         ),
@@ -83,6 +89,8 @@ def _process_to_dict(config: ProcessConfig) -> dict[str, Any]:
     return {
         "watch_regex": config.watch_regex,
         "require_tty": config.require_tty,
+        "app_watch_regex": config.app_watch_regex,
+        "app_require_tty": config.app_require_tty,
         "active_grace_seconds": config.active_grace_seconds,
         "cpu_active_threshold_percent": config.cpu_active_threshold_percent,
         "net_active_threshold_bytes": config.net_active_threshold_bytes,
