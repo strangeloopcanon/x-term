@@ -26,6 +26,8 @@ class GateConfig:
     poll_interval_seconds: float
     blocklist: list[str]
     include_www: bool
+    time_blocks: list[str]
+    block_until_unix: float
     process: ProcessConfig
 
 
@@ -48,6 +50,8 @@ DEFAULT_CONFIG = GateConfig(
     poll_interval_seconds=1.0,
     blocklist=["x.com", "twitter.com"],
     include_www=True,
+    time_blocks=[],
+    block_until_unix=0.0,
     process=DEFAULT_PROCESS_CONFIG,
 )
 
@@ -105,6 +109,11 @@ def config_from_dict(data: dict[str, Any]) -> GateConfig:
         blocklist = DEFAULT_CONFIG.blocklist
     blocklist = [str(item) for item in blocklist if str(item).strip()]
 
+    time_blocks = _get(data, "time_blocks", DEFAULT_CONFIG.time_blocks)
+    if not isinstance(time_blocks, list):
+        time_blocks = DEFAULT_CONFIG.time_blocks
+    time_blocks = [str(item) for item in time_blocks if str(item).strip()]
+
     return GateConfig(
         enabled=bool(_get(data, "enabled", DEFAULT_CONFIG.enabled)),
         reward_mode=bool(_get(data, "reward_mode", DEFAULT_CONFIG.reward_mode)),
@@ -113,6 +122,8 @@ def config_from_dict(data: dict[str, Any]) -> GateConfig:
         ),
         blocklist=blocklist,
         include_www=bool(_get(data, "include_www", DEFAULT_CONFIG.include_www)),
+        time_blocks=time_blocks,
+        block_until_unix=float(_get(data, "block_until_unix", DEFAULT_CONFIG.block_until_unix)),
         process=_process_from_dict(_get(data, "process", None)),
     )
 
@@ -124,6 +135,8 @@ def config_to_dict(config: GateConfig) -> dict[str, Any]:
         "poll_interval_seconds": config.poll_interval_seconds,
         "blocklist": list(config.blocklist),
         "include_www": config.include_www,
+        "time_blocks": list(config.time_blocks),
+        "block_until_unix": config.block_until_unix,
         "process": _process_to_dict(config.process),
     }
 

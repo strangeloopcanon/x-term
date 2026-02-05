@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,7 @@ from .install import (
     uninstall_menubar,
 )
 from .paths import config_path, hosts_path, state_path
-from .policy import should_block
+from .policy import block_decision, normalize_time_block, parse_duration_seconds
 from .process_gate import ProcessGate
 
 DEPLOYED_APP_DIR = Path("/Library/Application Support/x-gate/app/xgate")
@@ -45,16 +46,39 @@ def _prompt_domain() -> str:
     return output.strip()
 
 
+def _prompt_time_block() -> str:
+    if sys.platform != "darwin":
+        raise RuntimeError("--prompt is only supported on macOS")
+    script = 'text returned of (display dialog "Add time block (HH:MM-HH:MM)" default answer "")'
+    try:
+        output = subprocess.check_output(["/usr/bin/osascript", "-e", script], text=True)
+    except subprocess.CalledProcessError:
+        return ""
+    return output.strip()
+
+
 def _print_status(data: dict[str, Any]) -> None:
     print("X Gate")
     print(f"  enabled: {data['enabled']}")
     print(f"  reward_mode: {data['reward_mode']}")
     print(f"  process_running: {data['process_running']}")
     print(f"  process_active: {data['process_active']}")
+    print(f"  activity_block_active: {data.get('activity_block_active', False)}")
+    print(f"  time_block_active: {data.get('time_block_active', False)}")
+    print(f"  timer_block_active: {data.get('timer_block_active', False)}")
     print(f"  should_block: {data['should_block']}")
+    reasons = data.get("block_reasons") or []
+    print(f"  block_reasons: {', '.join(reasons) if reasons else '(none)'}")
     print(f"  hosts_blocked: {data['hosts_blocked']}")
     print(f"  config_path: {data['config_path']}")
     print(f"  blocklist: {', '.join(data['blocklist']) if data['blocklist'] else '(empty)'}")
+    print(f"  time_blocks: {', '.join(data.get('time_blocks') or []) if data.get('time_blocks') else '(none)'}")
+    block_until = float(data.get("block_until_unix", 0.0) or 0.0)
+    if block_until > 0:
+        local = datetime.fromtimestamp(block_until).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"  block_until: {local}")
+    else:
+        print("  block_until: (none)")
     warnings = data.get("status_warnings") or []
     if warnings:
         print("  warnings:")
@@ -110,8 +134,13 @@ def _status_payload(config: GateConfig, *, debug: bool, config_file: Path) -> di
     except ValueError:
         expanded = [domain for domain in config.blocklist if str(domain).strip()]
 
-    computed_should_block = should_block(config, active)
+    decision = block_decision(config, active)
+    computed_should_block = decision.should_block
     daemon_block = daemon_state.get("block") if daemon_state else None
+    daemon_reasons = daemon_state.get("block_reasons") if daemon_state else None
+    daemon_activity_block_active = daemon_state.get("activity_block_active") if daemon_state else None
+    daemon_time_block_active = daemon_state.get("time_block_active") if daemon_state else None
+    daemon_timer_block_active = daemon_state.get("timer_block_active") if daemon_state else None
     daemon_compat = daemon_state.get("compat_version") if daemon_state else None
     deployed_compat, deployed_error = _read_deployed_compat()
 
@@ -129,6 +158,10 @@ def _status_payload(config: GateConfig, *, debug: bool, config_file: Path) -> di
     if daemon_state is None:
         status_warnings.append("daemon state unavailable; status may be stale")
 
+    block_until_unix = float(config.block_until_unix or 0.0)
+    if daemon_state and isinstance(daemon_state.get("block_until_unix"), (int, float)):
+        block_until_unix = float(daemon_state.get("block_until_unix"))
+
     payload = {
         "cli_version": __version__,
         "compat_version": COMPAT_VERSION,
@@ -136,11 +169,33 @@ def _status_payload(config: GateConfig, *, debug: bool, config_file: Path) -> di
         "reward_mode": config.reward_mode,
         "process_running": running,
         "process_active": active,
+        "activity_block_active": (
+            bool(daemon_activity_block_active)
+            if isinstance(daemon_activity_block_active, bool)
+            else decision.activity_block_active
+        ),
+        "time_block_active": (
+            bool(daemon_time_block_active)
+            if isinstance(daemon_time_block_active, bool)
+            else decision.time_block_active
+        ),
+        "timer_block_active": (
+            bool(daemon_timer_block_active)
+            if isinstance(daemon_timer_block_active, bool)
+            else decision.timer_block_active
+        ),
+        "block_reasons": (
+            [str(item) for item in daemon_reasons if str(item).strip()]
+            if isinstance(daemon_reasons, list)
+            else decision.reasons
+        ),
         "should_block": bool(daemon_block) if isinstance(daemon_block, bool) else computed_should_block,
         "hosts_blocked": hosts_has_block(hosts_path()),
         "config_path": str(config_file),
         "blocklist": list(expanded),
         "include_www": config.include_www,
+        "time_blocks": list(config.time_blocks),
+        "block_until_unix": block_until_unix,
         "poll_interval_seconds": config.poll_interval_seconds,
         "daemon_state": daemon_state is not None,
         "daemon_compat_version": daemon_compat if isinstance(daemon_compat, int) else None,
@@ -247,6 +302,102 @@ def cmd_blocklist_remove(args: argparse.Namespace) -> int:
     new_blocklist = [domain for domain in config.blocklist if domain not in remove]
     save_config(path, replace(config, blocklist=new_blocklist))
     print("Removed")
+    return 0
+
+
+def cmd_timeblock_list(args: argparse.Namespace) -> int:
+    config = ensure_config(_resolve_config_path(args.config))
+    for block in config.time_blocks:
+        print(block)
+    return 0
+
+
+def cmd_timeblock_add(args: argparse.Namespace) -> int:
+    path = _resolve_config_path(args.config)
+    config = ensure_config(path)
+    blocks = list(args.blocks or [])
+    if args.prompt:
+        prompt_value = _prompt_time_block()
+        if prompt_value:
+            blocks.append(prompt_value)
+    if not blocks:
+        raise SystemExit("provide at least one time block or use --prompt")
+
+    normalized: list[str] = []
+    for block in blocks:
+        try:
+            normalized.append(normalize_time_block(block))
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+
+    new_time_blocks = list(config.time_blocks)
+    for block in normalized:
+        if block not in new_time_blocks:
+            new_time_blocks.append(block)
+    save_config(path, replace(config, time_blocks=new_time_blocks))
+    print("Added")
+    return 0
+
+
+def cmd_timeblock_remove(args: argparse.Namespace) -> int:
+    path = _resolve_config_path(args.config)
+    config = ensure_config(path)
+    blocks = list(args.blocks or [])
+    if not blocks:
+        raise SystemExit("provide at least one time block")
+
+    remove: set[str] = set()
+    for block in blocks:
+        try:
+            remove.add(normalize_time_block(block))
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+
+    new_time_blocks = [block for block in config.time_blocks if block not in remove]
+    save_config(path, replace(config, time_blocks=new_time_blocks))
+    print("Removed")
+    return 0
+
+
+def cmd_timeblock_clear(args: argparse.Namespace) -> int:
+    path = _resolve_config_path(args.config)
+    config = ensure_config(path)
+    save_config(path, replace(config, time_blocks=[]))
+    print("Cleared")
+    return 0
+
+
+def cmd_timer_set(args: argparse.Namespace) -> int:
+    path = _resolve_config_path(args.config)
+    config = ensure_config(path)
+    try:
+        seconds = parse_duration_seconds(args.duration)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    until = time.time() + seconds
+    save_config(path, replace(config, block_until_unix=until))
+    local = datetime.fromtimestamp(until).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"Timer set until {local}")
+    return 0
+
+
+def cmd_timer_clear(args: argparse.Namespace) -> int:
+    path = _resolve_config_path(args.config)
+    config = ensure_config(path)
+    save_config(path, replace(config, block_until_unix=0.0))
+    print("Timer cleared")
+    return 0
+
+
+def cmd_timer_status(args: argparse.Namespace) -> int:
+    config = ensure_config(_resolve_config_path(args.config))
+    until = float(config.block_until_unix or 0.0)
+    if until <= time.time():
+        print("Timer: inactive")
+        return 0
+    remaining = int(until - time.time())
+    local = datetime.fromtimestamp(until).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"Timer: active ({remaining}s remaining, until {local})")
     return 0
 
 
@@ -358,6 +509,30 @@ def main(argv: list[str] | None = None) -> int:
     blocklist_remove = blocklist_sub.add_parser("remove", help="Remove blocked domains")
     blocklist_remove.add_argument("domains", nargs="+", help="Domains to remove")
     blocklist_remove.set_defaults(func=cmd_blocklist_remove)
+
+    timeblock_parser = subparsers.add_parser("timeblock", help="Manage scheduled time blocks")
+    timeblock_sub = timeblock_parser.add_subparsers(dest="timeblock_cmd", required=True)
+    timeblock_list = timeblock_sub.add_parser("list", help="List time blocks")
+    timeblock_list.set_defaults(func=cmd_timeblock_list)
+    timeblock_add = timeblock_sub.add_parser("add", help="Add time blocks (HH:MM-HH:MM)")
+    timeblock_add.add_argument("blocks", nargs="*", help="Time blocks to add")
+    timeblock_add.add_argument("--prompt", action="store_true", help="Prompt for a time block")
+    timeblock_add.set_defaults(func=cmd_timeblock_add)
+    timeblock_remove = timeblock_sub.add_parser("remove", help="Remove time blocks")
+    timeblock_remove.add_argument("blocks", nargs="+", help="Time blocks to remove")
+    timeblock_remove.set_defaults(func=cmd_timeblock_remove)
+    timeblock_clear = timeblock_sub.add_parser("clear", help="Clear all time blocks")
+    timeblock_clear.set_defaults(func=cmd_timeblock_clear)
+
+    timer_parser = subparsers.add_parser("timer", help="Manage temporary block timer")
+    timer_sub = timer_parser.add_subparsers(dest="timer_cmd", required=True)
+    timer_set = timer_sub.add_parser("set", help="Block for a duration (e.g. 3h, 45m, 1h 30m)")
+    timer_set.add_argument("duration", help="Duration to keep blocking")
+    timer_set.set_defaults(func=cmd_timer_set)
+    timer_clear = timer_sub.add_parser("clear", help="Clear temporary block timer")
+    timer_clear.set_defaults(func=cmd_timer_clear)
+    timer_status = timer_sub.add_parser("status", help="Show temporary block timer")
+    timer_status.set_defaults(func=cmd_timer_status)
 
     menubar_parser = subparsers.add_parser("menubar", help="Manage menubar integration")
     menubar_sub = menubar_parser.add_subparsers(dest="menubar_cmd", required=True)
