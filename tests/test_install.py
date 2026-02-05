@@ -49,6 +49,7 @@ def test_install_daemon_tolerates_kickstart_failure_if_service_loaded(monkeypatc
     monkeypatch.setattr("xgate.install._write_plist", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("xgate.install._launchctl", fake_launchctl)
     monkeypatch.setattr("xgate.install.daemon_status", lambda: {"code": 0, "stdout": "", "stderr": ""})
+    monkeypatch.setattr("xgate.install.time.sleep", lambda _seconds: None)
 
     install_daemon(tmp_path / "config.json")
 
@@ -70,6 +71,32 @@ def test_install_daemon_raises_when_kickstart_fails_and_service_missing(monkeypa
     monkeypatch.setattr("xgate.install._write_plist", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("xgate.install._launchctl", fake_launchctl)
     monkeypatch.setattr("xgate.install.daemon_status", lambda: {"code": 113, "stdout": "", "stderr": ""})
+    monkeypatch.setattr("xgate.install.time.sleep", lambda _seconds: None)
 
     with pytest.raises(LaunchctlError, match="kickstart"):
         install_daemon(tmp_path / "config.json")
+
+
+def test_install_daemon_tolerates_kickstart_failure_after_status_retry(monkeypatch, tmp_path: Path):
+    status_codes = iter([113, 113, 0])
+
+    def fake_launchctl(args, *, tolerate_no_such_process=False):  # noqa: ARG001
+        if args[:2] == ["kickstart", "-k"]:
+            raise LaunchctlError(args, 37, "unknown error")
+        return _completed(0)
+
+    monkeypatch.setattr("xgate.install._require_root", lambda: None)
+    monkeypatch.setattr("xgate.install._user_from_sudo", lambda: SimpleNamespace(pw_uid=1, pw_gid=1))
+    monkeypatch.setattr("xgate.install._ensure_log_dir", lambda: None)
+    monkeypatch.setattr("xgate.install._install_code", lambda: tmp_path)
+    monkeypatch.setattr("xgate.install._ensure_user_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("xgate.install._chown", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("xgate.install._write_plist", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("xgate.install._launchctl", fake_launchctl)
+    monkeypatch.setattr(
+        "xgate.install.daemon_status",
+        lambda: {"code": next(status_codes), "stdout": "", "stderr": ""},
+    )
+    monkeypatch.setattr("xgate.install.time.sleep", lambda _seconds: None)
+
+    install_daemon(tmp_path / "config.json")

@@ -5,6 +5,7 @@ import pwd
 import shutil
 import stat
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -151,6 +152,15 @@ def _chown(path: Path, user: pwd.struct_passwd) -> None:
     os.chown(path, user.pw_uid, user.pw_gid)
 
 
+def _daemon_loaded(*, retries: int = 5, delay_seconds: float = 0.2) -> bool:
+    for attempt in range(retries + 1):
+        if daemon_status()["code"] == 0:
+            return True
+        if attempt < retries:
+            time.sleep(delay_seconds)
+    return False
+
+
 def install_daemon(config_path: Path) -> None:
     _require_root()
     user = _user_from_sudo()
@@ -165,7 +175,7 @@ def install_daemon(config_path: Path) -> None:
     except LaunchctlError as exc:
         # launchctl can return EIO if the label is already loaded in some states.
         # Verify whether the service is present before treating this as fatal.
-        if daemon_status()["code"] != 0:
+        if not _daemon_loaded():
             raise
         if exc.returncode != 5 and "Input/output error" not in exc.detail:
             raise
@@ -175,7 +185,7 @@ def install_daemon(config_path: Path) -> None:
     except LaunchctlError:
         # kickstart can fail with "unknown error" on some launchd states.
         # If the service is present, keep install successful and rely on KeepAlive/RunAtLoad.
-        if daemon_status()["code"] != 0:
+        if not _daemon_loaded():
             raise
 
 
