@@ -17,7 +17,7 @@ from . import COMPAT_VERSION, __version__
 from .config import DEFAULT_CONFIG, GateConfig, load_config
 from .hosts import apply_hosts, expand_domains, normalize_domain
 from .paths import hosts_path, log_path, state_path
-from .policy import should_block
+from .policy import block_decision
 from .process_gate import ProcessGate, set_log_file
 
 
@@ -109,18 +109,25 @@ def run_loop(config_file: Path, *, once: bool) -> int:
             gate = ProcessGate(gate_config.process)
 
         process_running, process_active, active_debug = gate.poll()
-        block_now = should_block(gate_config, process_active)
+        decision = block_decision(gate_config, process_active)
+        block_now = decision.should_block
         domains = _expand_blocklist(gate_config.blocklist, gate_config.include_www)
 
         _write_state(
             {
                 "timestamp_unix": time.time(),
                 "block": block_now,
+                "block_reasons": decision.reasons,
+                "activity_block_active": decision.activity_block_active,
+                "time_block_active": decision.time_block_active,
+                "timer_block_active": decision.timer_block_active,
                 "process_running": process_running,
                 "process_active": process_active,
                 "evidence": active_debug.get("evidence"),
                 "enabled": gate_config.enabled,
                 "reward_mode": gate_config.reward_mode,
+                "time_blocks": gate_config.time_blocks,
+                "block_until_unix": gate_config.block_until_unix,
                 "poll_interval_seconds": gate_config.poll_interval_seconds,
                 "daemon_version": __version__,
                 "compat_version": COMPAT_VERSION,
@@ -132,6 +139,7 @@ def run_loop(config_file: Path, *, once: bool) -> int:
                 "info",
                 "state_update",
                 block=block_now,
+                block_reasons=decision.reasons,
                 process_running=process_running,
                 process_active=process_active,
                 evidence=active_debug.get("evidence"),

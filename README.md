@@ -61,6 +61,13 @@ In plain English:
 - **Reward mode ON**: “I can browse X while I’m working; block it when I’m not.”
 - **Reward mode OFF**: “Block X while I’m working; allow it otherwise.”
 
+Additional block sources (when Enabled is On):
+
+- **Temporary timer**: block until a timestamp (`timer set 3h`)
+- **Daily time blocks**: block for local-time windows (`timeblock add 22:00-07:00`)
+
+These are additive. If any source says “block”, X/Twitter is blocked.
+
 ## Daily commands
 
 ```bash
@@ -71,6 +78,12 @@ In plain English:
 ./bin/xgate blocklist add x.com
 ./bin/xgate blocklist add --prompt
 ./bin/xgate blocklist list
+./bin/xgate timer set 3h
+./bin/xgate timer clear
+./bin/xgate timer status
+./bin/xgate timeblock add 22:00-07:00
+./bin/xgate timeblock list
+./bin/xgate timeblock remove 22:00-07:00
 ./bin/xgate chrome reset-network
 ./bin/xgate chrome restart
 ```

@@ -41,3 +41,20 @@ def test_status_payload_warns_on_compat_mismatch(monkeypatch):
     warnings = payload.get("status_warnings", [])
     assert any("CLI/daemon mismatch" in warning for warning in warnings)
     assert any("daemon state unavailable" in warning for warning in warnings)
+
+
+def test_status_payload_includes_time_block_fields(monkeypatch):
+    monkeypatch.setattr(
+        "xgate.cli.ProcessGate.poll",
+        lambda self: (False, False, {"evidence": []}),
+    )
+    monkeypatch.setattr("xgate.cli.hosts_has_block", lambda _path: False)
+    monkeypatch.setattr("xgate.cli._read_daemon_state", lambda **_kwargs: None)
+    monkeypatch.setattr("xgate.cli._read_deployed_compat", lambda: (COMPAT_VERSION, None))
+
+    payload = _status_payload(DEFAULT_CONFIG, debug=False, config_file=Path("/tmp/config.json"))
+    assert "time_blocks" in payload
+    assert "block_until_unix" in payload
+    assert "block_reasons" in payload
+    assert "timer_block_active" in payload
+    assert "time_block_active" in payload

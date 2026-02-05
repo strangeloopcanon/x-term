@@ -220,6 +220,8 @@ import json
 import os
 import subprocess
 import sys
+import time
+from datetime import datetime
 
 xgate = os.environ["XGATE_BIN"]
 
@@ -251,9 +253,23 @@ print(
 )
 process_line = "Active" if data.get("process_active") else "Idle"
 print(f"Process: {process_line}")
+reasons = data.get("block_reasons") or []
+if reasons:
+    print(f"Reasons: {', '.join(reasons)}")
+block_until_unix = float(data.get("block_until_unix", 0.0) or 0.0)
+if block_until_unix > time.time():
+    until = datetime.fromtimestamp(block_until_unix).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"Timer: active until {until}")
+else:
+    print("Timer: inactive")
 warnings = data.get("status_warnings") or []
 if warnings:
     print(f"Warning: {warnings[0]} | color=orange")
+print("---")
+print(f"Block 30m | bash={xgate} param1=timer param2=set param3=30m terminal=false refresh=true")
+print(f"Block 1h | bash={xgate} param1=timer param2=set param3=1h terminal=false refresh=true")
+print(f"Block 3h | bash={xgate} param1=timer param2=set param3=3h terminal=false refresh=true")
+print(f"Clear timer | bash={xgate} param1=timer param2=clear terminal=false refresh=true")
 print("---")
 print(f"Reset Chrome network (apply now) | bash={xgate} param1=chrome param2=reset-network terminal=false refresh=false")
 print(f"Restart Chrome (apply now) | bash={xgate} param1=chrome param2=restart terminal=false refresh=false")
@@ -262,6 +278,15 @@ print(f"Add domain… | bash={xgate} param1=blocklist param2=add param3=--prompt
 print("Blocklist")
 for domain in data.get("blocklist", []):
     print(f"-- {domain}")
+print("---")
+print(f"Add time block… | bash={xgate} param1=timeblock param2=add param3=--prompt terminal=false refresh=true")
+print(f"Clear all time blocks | bash={xgate} param1=timeblock param2=clear terminal=false refresh=true")
+print("Time blocks")
+time_blocks = data.get("time_blocks") or []
+if not time_blocks:
+    print("-- (none)")
+for block in time_blocks:
+    print(f"-- {block} | bash={xgate} param1=timeblock param2=remove param3={block} terminal=false refresh=true")
 PY
 """
     script = (
