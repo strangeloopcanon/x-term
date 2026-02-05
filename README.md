@@ -92,6 +92,8 @@ XGATE_CONFIG=/path/to/config.json ./bin/xgate status
 - Editing `/etc/hosts` is global (affects all apps).
 - DNS cache is flushed on changes (macOS).
 - Chrome can keep DNS/sockets/tabs alive across flips; use `./bin/xgate chrome reset-network` (or `./bin/xgate chrome restart`) to apply immediately.
+- SwiftBar plugin refreshes every ~10 seconds (`xgate.10s.sh`).
+- After pulling code updates, run `sudo ./bin/xgate daemon install` once so launchd picks up the new daemon build.
 - If Chrome uses Secure DNS with a custom resolver, hosts-based blocking can be inconsistent.
 - Cancelling the domain prompt leaves your blocklist unchanged.
 

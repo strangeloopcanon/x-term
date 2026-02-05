@@ -13,6 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from . import COMPAT_VERSION, __version__
 from .config import DEFAULT_CONFIG, GateConfig, load_config
 from .hosts import apply_hosts, expand_domains, normalize_domain
 from .paths import hosts_path, log_path, state_path
@@ -38,16 +39,16 @@ def _log(level: str, message: str, **fields: Any) -> None:
 
 
 def _write_state(payload: dict[str, Any]) -> None:
+    path = state_path()
     try:
-        path = state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
         tmp.replace(path)
         with contextlib.suppress(Exception):
             os.chmod(path, 0o644)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log("warning", "state_write_failed", path=str(path), error=str(exc))
 
 
 def _load_config_safe(path: Path) -> tuple[GateConfig, bool]:
@@ -121,6 +122,8 @@ def run_loop(config_file: Path, *, once: bool) -> int:
                 "enabled": gate_config.enabled,
                 "reward_mode": gate_config.reward_mode,
                 "poll_interval_seconds": gate_config.poll_interval_seconds,
+                "daemon_version": __version__,
+                "compat_version": COMPAT_VERSION,
             }
         )
 

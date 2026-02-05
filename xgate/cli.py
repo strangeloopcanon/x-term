@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -9,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from . import COMPAT_VERSION, __version__
 from .chrome import reset_chrome_network_service, restart_chrome
 from .config import DEFAULT_CONFIG, GateConfig, ensure_config, save_config, update_config
 from .hosts import expand_domains, hosts_has_block, normalize_domain
@@ -22,6 +24,8 @@ from .install import (
 from .paths import config_path, hosts_path, state_path
 from .policy import should_block
 from .process_gate import ProcessGate
+
+DEPLOYED_APP_DIR = Path("/Library/Application Support/x-gate/app/xgate")
 
 
 def _resolve_config_path(arg: str | None) -> Path:
@@ -51,6 +55,11 @@ def _print_status(data: dict[str, Any]) -> None:
     print(f"  hosts_blocked: {data['hosts_blocked']}")
     print(f"  config_path: {data['config_path']}")
     print(f"  blocklist: {', '.join(data['blocklist']) if data['blocklist'] else '(empty)'}")
+    warnings = data.get("status_warnings") or []
+    if warnings:
+        print("  warnings:")
+        for warning in warnings:
+            print(f"    - {warning}")
 
 
 def _read_daemon_state(*, max_age_seconds: float) -> dict[str, Any] | None:
@@ -68,6 +77,21 @@ def _read_daemon_state(*, max_age_seconds: float) -> dict[str, Any] | None:
         return None
     data["_age_seconds"] = age
     return data
+
+
+def _read_deployed_compat() -> tuple[int | None, str | None]:
+    init_path = DEPLOYED_APP_DIR / "__init__.py"
+    if not init_path.exists():
+        return None, "deployed daemon package not found; run `sudo ./bin/xgate daemon install`"
+    try:
+        content = init_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        return None, f"unable to read deployed daemon metadata: {exc}"
+
+    compat_match = re.search(r"^COMPAT_VERSION\s*=\s*(\d+)\s*$", content, flags=re.MULTILINE)
+    if compat_match is None:
+        return None, "deployed daemon missing COMPAT_VERSION marker; reinstall daemon"
+    return int(compat_match.group(1)), None
 
 
 def _status_payload(config: GateConfig, *, debug: bool, config_file: Path) -> dict[str, Any]:
@@ -88,8 +112,26 @@ def _status_payload(config: GateConfig, *, debug: bool, config_file: Path) -> di
 
     computed_should_block = should_block(config, active)
     daemon_block = daemon_state.get("block") if daemon_state else None
+    daemon_compat = daemon_state.get("compat_version") if daemon_state else None
+    deployed_compat, deployed_error = _read_deployed_compat()
+
+    status_warnings: list[str] = []
+    if isinstance(deployed_compat, int) and deployed_compat != COMPAT_VERSION:
+        status_warnings.append(
+            f"CLI/daemon mismatch (cli={COMPAT_VERSION}, deployed={deployed_compat}); run `sudo ./bin/xgate daemon install`"
+        )
+    elif deployed_error:
+        status_warnings.append(deployed_error)
+    if daemon_state is not None and isinstance(daemon_compat, int) and daemon_compat != COMPAT_VERSION:
+        status_warnings.append(
+            f"running daemon compat mismatch (cli={COMPAT_VERSION}, daemon={daemon_compat}); reinstall daemon"
+        )
+    if daemon_state is None:
+        status_warnings.append("daemon state unavailable; status may be stale")
 
     payload = {
+        "cli_version": __version__,
+        "compat_version": COMPAT_VERSION,
         "enabled": config.enabled,
         "reward_mode": config.reward_mode,
         "process_running": running,
@@ -101,6 +143,9 @@ def _status_payload(config: GateConfig, *, debug: bool, config_file: Path) -> di
         "include_www": config.include_www,
         "poll_interval_seconds": config.poll_interval_seconds,
         "daemon_state": daemon_state is not None,
+        "daemon_compat_version": daemon_compat if isinstance(daemon_compat, int) else None,
+        "deployed_compat_version": deployed_compat if isinstance(deployed_compat, int) else None,
+        "status_warnings": status_warnings,
     }
     if debug:
         payload["active_debug"] = active_debug

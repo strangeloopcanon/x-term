@@ -12,6 +12,8 @@ LABEL = "com.xterm.xgate"
 PLIST_PATH = Path("/Library/LaunchDaemons") / f"{LABEL}.plist"
 APP_ROOT = Path("/Library/Application Support/x-gate")
 APP_CODE_DIR = APP_ROOT / "app"
+MENUBAR_PLUGIN_NAME = "xgate.10s.sh"
+MENUBAR_PLUGIN_LEGACY = "xgate.1m.sh"
 
 
 def _require_root() -> None:
@@ -183,7 +185,10 @@ def _swiftbar_plugins_dir() -> Path:
 def install_menubar(xgate_bin: Path, config_path: Path) -> Path:
     plugin_dir = _swiftbar_plugins_dir()
     plugin_dir.mkdir(parents=True, exist_ok=True)
-    plugin_path = plugin_dir / "xgate.1m.sh"
+    plugin_path = plugin_dir / MENUBAR_PLUGIN_NAME
+    legacy_path = plugin_dir / MENUBAR_PLUGIN_LEGACY
+    if legacy_path.exists() and legacy_path != plugin_path:
+        legacy_path.unlink()
 
     script = """#!/usr/bin/env bash
 export XGATE_BIN="__XGATE_BIN__"
@@ -224,6 +229,9 @@ print(
 )
 process_line = "Active" if data.get("process_active") else "Idle"
 print(f"Process: {process_line}")
+warnings = data.get("status_warnings") or []
+if warnings:
+    print(f"Warning: {warnings[0]} | color=orange")
 print("---")
 print(f"Reset Chrome network (apply now) | bash={xgate} param1=chrome param2=reset-network terminal=false refresh=false")
 print(f"Restart Chrome (apply now) | bash={xgate} param1=chrome param2=restart terminal=false refresh=false")
@@ -244,6 +252,8 @@ PY
 
 
 def uninstall_menubar() -> None:
-    plugin_path = _swiftbar_plugins_dir() / "xgate.1m.sh"
-    if plugin_path.exists():
-        plugin_path.unlink()
+    plugin_dir = _swiftbar_plugins_dir()
+    for name in (MENUBAR_PLUGIN_NAME, MENUBAR_PLUGIN_LEGACY):
+        plugin_path = plugin_dir / name
+        if plugin_path.exists():
+            plugin_path.unlink()
