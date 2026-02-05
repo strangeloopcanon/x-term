@@ -271,6 +271,8 @@ def cmd_daemon_install(args: argparse.Namespace) -> int:
         install_daemon(_resolve_config_path(args.config))
     except PermissionError as exc:
         raise SystemExit("daemon install requires sudo") from exc
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     print("Daemon installed")
     return 0
 
@@ -280,6 +282,8 @@ def cmd_daemon_uninstall(args: argparse.Namespace) -> int:
         uninstall_daemon()
     except PermissionError as exc:
         raise SystemExit("daemon uninstall requires sudo") from exc
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     print("Daemon removed")
     return 0
 

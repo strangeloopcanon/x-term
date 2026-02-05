@@ -21,8 +21,22 @@ def _require_root() -> None:
         raise PermissionError("root required")
 
 
-def _launchctl(args: list[str]) -> None:
-    subprocess.run(["/bin/launchctl", *args], check=False)
+def _launchctl(args: list[str], *, tolerate_no_such_process: bool = False) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        ["/bin/launchctl", *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return result
+
+    stderr = (result.stderr or "").strip()
+    if tolerate_no_such_process and "No such process" in stderr:
+        return result
+
+    detail = stderr or (result.stdout or "").strip() or "unknown error"
+    raise RuntimeError(f"launchctl {' '.join(args)} failed ({result.returncode}): {detail}")
 
 
 def _repo_root() -> Path:
@@ -135,15 +149,23 @@ def install_daemon(config_path: Path) -> None:
     _ensure_user_config(config_path, user)
     _chown(config_path, user)
     _write_plist(config_path, working_dir=working_dir)
-    _launchctl(["bootout", f"system/{LABEL}"])
-    _launchctl(["bootstrap", "system", str(PLIST_PATH)])
+    _launchctl(["bootout", f"system/{LABEL}"], tolerate_no_such_process=True)
+    try:
+        _launchctl(["bootstrap", "system", str(PLIST_PATH)])
+    except RuntimeError as exc:
+        # launchctl can return EIO if the label is already loaded in some states.
+        # Verify whether the service is present before treating this as fatal.
+        if daemon_status()["code"] != 0:
+            raise
+        if "Input/output error" not in str(exc):
+            raise
     _launchctl(["enable", f"system/{LABEL}"])
     _launchctl(["kickstart", "-k", f"system/{LABEL}"])
 
 
 def uninstall_daemon() -> None:
     _require_root()
-    _launchctl(["bootout", f"system/{LABEL}"])
+    _launchctl(["bootout", f"system/{LABEL}"], tolerate_no_such_process=True)
     if PLIST_PATH.exists():
         PLIST_PATH.unlink()
     if APP_CODE_DIR.exists():
