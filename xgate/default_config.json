@@ -1,8 +1,7 @@
 {
   "blocklist": [
     "x.com",
-    "twitter.com",
-    "t.co"
+    "twitter.com"
   ],
   "enabled": true,
   "include_www": true,

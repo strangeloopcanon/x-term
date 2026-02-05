@@ -84,7 +84,7 @@ XGATE_CONFIG=/path/to/config.json ./bin/xgate status
 
 ### Default blocklist
 
-`x.com`, `twitter.com`, `t.co` (plus `www.` variants).
+`x.com`, `twitter.com` (plus `www.` variants).
 
 <details>
 <summary>▶ Notes and caveats</summary>

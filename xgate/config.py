@@ -42,7 +42,7 @@ DEFAULT_CONFIG = GateConfig(
     enabled=True,
     reward_mode=True,
     poll_interval_seconds=1.0,
-    blocklist=["x.com", "twitter.com", "t.co"],
+    blocklist=["x.com", "twitter.com"],
     include_www=True,
     process=DEFAULT_PROCESS_CONFIG,
 )
